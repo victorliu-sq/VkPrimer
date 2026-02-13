@@ -14,7 +14,7 @@ static std::vector<uint32_t> readSpirvU32(const char *filename) {
   size_t sizeBytes = std::ftell(f);
   std::rewind(f);
 
-  assert(sizeBytes % 4 == 0); // SPIR-V is 32-bit words
+  assert(sizeBytes % 4 == 0);
 
   std::vector<uint32_t> words(sizeBytes / 4);
   size_t read = std::fread(words.data(), 1, sizeBytes, f);
@@ -36,7 +36,7 @@ static uint32_t findQueueFamily(VkPhysicalDevice phys, VkQueueFlags required) {
     if ((props[i].queueFlags & required) == required)
       return i;
 
-  assert(false && "No suitable queue family found");
+  assert(false);
   return 0;
 }
 
@@ -48,12 +48,16 @@ static uint32_t findMemoryType(VkPhysicalDevice phys, uint32_t typeBits, VkMemor
     if ((typeBits & (1u << i)) && ((mp.memoryTypes[i].propertyFlags & props) == props))
       return i;
   }
-  assert(false && "No suitable memory type found");
+  assert(false);
   return 0;
 }
 
 int main() {
-  const uint32_t N = 4;
+  const uint32_t N = 10000;
+
+  const uint32_t threadsPerGroup = 1024;
+  const uint32_t numWorkgroups = (N + threadsPerGroup - 1) / threadsPerGroup;
+  const uint32_t totalThreads = threadsPerGroup * numWorkgroups;
 
   // ---- Instance ----
   VkInstance instance = VK_NULL_HANDLE;
@@ -70,10 +74,9 @@ int main() {
   VK_CHECK(vkEnumeratePhysicalDevices(instance, &gpuCount, gpus.data()));
   VkPhysicalDevice phys = gpus[0];
 
-  // ---- Compute queue family ----
+  // ---- Queue ----
   uint32_t queueFamilyIndex = findQueueFamily(phys, VK_QUEUE_COMPUTE_BIT);
 
-  // ---- Device + queue ----
   float prio = 1.0f;
   VkDeviceQueueCreateInfo qci{};
   qci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
@@ -107,19 +110,17 @@ int main() {
   cbai.commandBufferCount = 1;
   VK_CHECK(vkAllocateCommandBuffers(device, &cbai, &cmd));
 
-  // ---- Buffers (A, B, Out) ----
+  // ---- Buffers ----
   VkBuffer buf[3]{};
   VkDeviceMemory mem[3]{};
 
   auto makeBuffer = [&](int idx) {
-    // Create Memory Buffer
     VkBufferCreateInfo bci{};
     bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bci.size = sizeof(float) * N;
     bci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     VK_CHECK(vkCreateBuffer(device, &bci, nullptr, &buf[idx]));
 
-    // Allocate Device Memory
     VkMemoryRequirements req{};
     vkGetBufferMemoryRequirements(device, buf[idx], &req);
 
@@ -131,8 +132,6 @@ int main() {
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
     VK_CHECK(vkAllocateMemory(device, &mai, nullptr, &mem[idx]));
-
-    // Bind Device Memory to Memory Buffer
     VK_CHECK(vkBindBufferMemory(device, buf[idx], mem[idx], 0));
   };
 
@@ -140,18 +139,15 @@ int main() {
   makeBuffer(1);
   makeBuffer(2);
 
-  // Write A, B
+  // ---- Init A and B (1..10000) ----
   float *p = nullptr;
+
   VK_CHECK(vkMapMemory(device, mem[0], 0, VK_WHOLE_SIZE, 0, (void**)&p));
-  for (uint32_t i = 0; i < N; i++) {
-    p[i] = float(i);
-  }
+  for (uint32_t i = 0; i < N; i++) p[i] = float(i + 1);
   vkUnmapMemory(device, mem[0]);
 
   VK_CHECK(vkMapMemory(device, mem[1], 0, VK_WHOLE_SIZE, 0, (void**)&p));
-  for (uint32_t i = 0; i < N; i++) {
-    p[i] = float(i) * 10.0f;
-  }
+  for (uint32_t i = 0; i < N; i++) p[i] = float(i + 1) * 10.0f;
   vkUnmapMemory(device, mem[1]);
 
   // ---- Descriptor set layout ----
@@ -170,11 +166,19 @@ int main() {
   dlci.pBindings = bindings;
   VK_CHECK(vkCreateDescriptorSetLayout(device, &dlci, nullptr, &layout));
 
+  // ---- Push constant range ----
+  VkPushConstantRange pcr{};
+  pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  pcr.offset = 0;
+  pcr.size = sizeof(uint32_t) * 2;
+
   VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
   VkPipelineLayoutCreateInfo plci{};
   plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
   plci.setLayoutCount = 1;
   plci.pSetLayouts = &layout;
+  plci.pushConstantRangeCount = 1;
+  plci.pPushConstantRanges = &pcr;
   VK_CHECK(vkCreatePipelineLayout(device, &plci, nullptr, &pipelineLayout));
 
   // ---- Descriptor pool + set ----
@@ -216,8 +220,8 @@ int main() {
   }
   vkUpdateDescriptorSets(device, 3, writes, 0, nullptr);
 
-  // ---- Shader module (ALIGNED SPIR-V WORDS!) ----
-  auto spirv = readSpirvU32("add.spv"); // must be valid Vulkan SPIR-V
+  // ---- Shader module ----
+  auto spirv = readSpirvU32("add_10k.spv");
   VkShaderModule shader = VK_NULL_HANDLE;
 
   VkShaderModuleCreateInfo smci{};
@@ -226,7 +230,6 @@ int main() {
   smci.pCode = spirv.data();
   VK_CHECK(vkCreateShaderModule(device, &smci, nullptr, &shader));
 
-  // ---- Compute pipeline (SAFE INIT) ----
   VkPipelineShaderStageCreateInfo stage{};
   stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
   stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -249,7 +252,16 @@ int main() {
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout,
                           0, 1, &descSet, 0, nullptr);
-  vkCmdDispatch(cmd, N, 1, 1);
+
+  struct Push {
+    uint32_t N;
+    uint32_t totalThreads;
+  } push{N, totalThreads};
+  vkCmdPushConstants(cmd, pipelineLayout,
+                     VK_SHADER_STAGE_COMPUTE_BIT,
+                     0, sizeof(push), &push);
+
+  vkCmdDispatch(cmd, numWorkgroups, 1, 1);
 
   VK_CHECK(vkEndCommandBuffer(cmd));
 
@@ -263,8 +275,8 @@ int main() {
 
   // ---- Read Out ----
   VK_CHECK(vkMapMemory(device, mem[2], 0, VK_WHOLE_SIZE, 0, (void**)&p));
-  std::cout << "Result:\n";
-  for (uint32_t i = 0; i < N; i++) std::cout << p[i] << "\n";
+  std::cout << "Result (first 16):\n";
+  for (uint32_t i = 0; i < 16; i++) std::cout << p[i] << "\n";
   vkUnmapMemory(device, mem[2]);
 
   std::cout << "Done\n";
