@@ -61,9 +61,9 @@ static uint32_t findMemoryType(VkPhysicalDevice phys, uint32_t typeBits, VkMemor
 }
 
 struct Buffer {
-  VkBuffer buf{};
-  VkDeviceMemory mem{};
-  VkDeviceAddress addr{};
+  VkBuffer buf{}; // low-level handler
+  VkDeviceMemory mem{}; // device memory
+  VkDeviceAddress addr{}; // device memory address
   VkDeviceSize size{};
 };
 
@@ -181,7 +181,7 @@ static VkCommandPool createCmdPool(VkDevice dev, uint32_t qfam) {
   return pool;
 }
 
-static VkCommandBuffer allocCmd(VkDevice dev, VkCommandPool pool) {
+static VkCommandBuffer createCmdBuffer(VkDevice dev, VkCommandPool pool) {
   VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
   ai.commandPool = pool;
   ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -192,12 +192,12 @@ static VkCommandBuffer allocCmd(VkDevice dev, VkCommandPool pool) {
 }
 
 static void submitAndWait(VkDevice dev, VkQueue q, VkCommandBuffer cmd) {
-  VK_CHECK(vkEndCommandBuffer(cmd));
+  VK_CHECK(vkEndCommandBuffer(cmd)); // End Recoding Command
   VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
   si.commandBufferCount = 1;
   si.pCommandBuffers = &cmd;
-  VK_CHECK(vkQueueSubmit(q, 1, &si, VK_NULL_HANDLE));
-  VK_CHECK(vkQueueWaitIdle(q));
+  VK_CHECK(vkQueueSubmit(q, 1, &si, VK_NULL_HANDLE)); // Submit to Queue
+  VK_CHECK(vkQueueWaitIdle(q)); // Wait for Completion
 }
 
 static void cmdTransitionImage(VkCommandBuffer cmd, VkImage img, VkImageLayout oldL, VkImageLayout newL) {
@@ -219,9 +219,11 @@ static void cmdTransitionImage(VkCommandBuffer cmd, VkImage img, VkImageLayout o
 
 // ---- Acceleration Structure Helpers ----
 
+// Accel struct represents exactly one acceleration structure object — either a BLAS or a TLAS node — not an entire AS tree.
+// Accel = one BLAS or TLAS node
 struct Accel {
-  VkAccelerationStructureKHR as{};
-  Buffer backing; // buffer containing AS
+  VkAccelerationStructureKHR as{}; // handle
+  Buffer backing; // buffer, the actual memory that S
   VkDeviceAddress addr{};
 };
 
@@ -231,6 +233,7 @@ static VkDeviceAddress getASAddress(VkDevice dev, VkAccelerationStructureKHR as)
   return vkGetAccelerationStructureDeviceAddressKHR(dev, &ai);
 }
 
+// Create one BLAS node from Triangles
 static Accel createBLAS_Triangles(
   VkDevice dev, VkPhysicalDevice phys, VkCommandBuffer cmd,
   const Buffer &vbo, uint32_t vertexCount, VkDeviceSize vertexStride,
@@ -307,6 +310,8 @@ static Accel createBLAS_Triangles(
   return out;
 }
 
+// Create one TLAS node
+// blasAddr: device address of the entire BLAS acceleration structure
 static Accel createTLAS_OneInstance(
   VkDevice dev, VkPhysicalDevice phys, VkCommandBuffer cmd,
   VkDeviceAddress blasAddr) {
@@ -471,13 +476,17 @@ int main() {
   }
 
   // ---- Queue family (compute is fine) ----
+  // ---- Queue family are just hardware capabilities that already exist on the physical device.
   uint32_t qfCount = 0;
   vkGetPhysicalDeviceQueueFamilyProperties(phys, &qfCount, nullptr);
   std::vector<VkQueueFamilyProperties> qfs(qfCount);
   vkGetPhysicalDeviceQueueFamilyProperties(phys, &qfCount, qfs.data());
 
+  // Queue families are not created by you. They already exist on the physical device (GPU).
+  // You only query them and choose an index.
   uint32_t qfam = UINT32_MAX;
   for (uint32_t i = 0; i < qfCount; i++) {
+    // This line just chooses one queue family that supports compute so the program can request a queue from it when creating the logical device.
     if (qfs[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
       qfam = i;
       break;
@@ -512,11 +521,13 @@ int main() {
     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR
   };
 
+  // a linked list of features.
   VkPhysicalDeviceFeatures2 feats{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
   feats.pNext = &rtf;
   rtf.pNext = &asf;
   asf.pNext = &bda;
 
+  // find all supported features in a physical device and fills in the supported feature booleans
   vkGetPhysicalDeviceFeatures2(phys, &feats);
 
   if (!rtf.rayTracingPipeline || !asf.accelerationStructure || !bda.bufferDeviceAddress) {
@@ -525,14 +536,14 @@ int main() {
   }
 
   // Enable them
-  rtf.rayTracingPipeline = VK_TRUE;
-  asf.accelerationStructure = VK_TRUE;
-  bda.bufferDeviceAddress = VK_TRUE;
+  // rtf.rayTracingPipeline = VK_TRUE;
+  // asf.accelerationStructure = VK_TRUE;
+  // bda.bufferDeviceAddress = VK_TRUE;
 
   // ---- Device + queue ----
   float qprio = 1.0f;
   VkDeviceQueueCreateInfo qci{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
-  qci.queueFamilyIndex = qfam;
+  qci.queueFamilyIndex = qfam; // init qci with index of the selected queue family
   qci.queueCount = 1;
   qci.pQueuePriorities = &qprio;
 
@@ -543,23 +554,27 @@ int main() {
   dci.ppEnabledExtensionNames = devExts.data();
   dci.pNext = &feats; // ✅ correct chain root
 
+  // Create a logical device from this physical device with these extensions enabled
   VkDevice dev{};
   VK_CHECK(vkCreateDevice(phys, &dci, nullptr, &dev));
   volkLoadDevice(dev);
 
+  // Get an arbitrary queue: the first one.
   VkQueue queue{};
-  vkGetDeviceQueue(dev, qfam, 0, &queue);
+  vkGetDeviceQueue(dev, qfam, 0, &queue); // This is where Vulkan/driver allocates 1 queue from family qfam for your new VkDevice.
 
   // ---- Rest of your original code unchanged from here ----
   // Command setup
   VkCommandPool pool = createCmdPool(dev, qfam);
-  VkCommandBuffer cmd = allocCmd(dev, pool);
+  VkCommandBuffer cmd = createCmdBuffer(dev, pool);
 
   // Geometry buffers (2 triangles)
   std::vector<Vertex> vertices = {
     {-0.5f, -0.5f, 0.0f}, {0.5f, -0.5f, 0.0f}, {0.0f, 0.5f, 0.0f},
     {-0.2f, -0.2f, 0.0f}, {0.8f, -0.2f, 0.0f}, {0.3f, 0.7f, 0.0f},
   };
+
+  // In this example, indices are trivial
   std::vector<uint32_t> indices = {0, 1, 2, 3, 4, 5};
 
   Buffer vbo = createBuffer(dev, phys, sizeof(Vertex) * vertices.size(),
@@ -878,3 +893,4 @@ int main() {
   std::cout << "Done.\n";
   return 0;
 }
+
