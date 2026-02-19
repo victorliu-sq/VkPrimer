@@ -2,7 +2,8 @@
 set -e  # stop on first error
 
 SLANGC="./cmake-build-debug/_deps/Slang-linux-x86_64-2026.1.1/bin/slangc"
-SHADER="rt2d_triangles.slang"
+#SLANGC="slangc"
+SHADER="rt_triangles.slang"
 
 echo "== Slang RT shader build =="
 
@@ -32,6 +33,10 @@ echo "Compiling closest hit..."
 $SLANGC $SHADER $COMMON_FLAGS \
   -entry chitMain -stage closesthit -o chit.spv
 
+echo "Compiling any-hit..."
+$SLANGC $SHADER $COMMON_FLAGS \
+  -entry aHitMain -stage anyhit -o ahit.spv
+
 echo "== Done =="
 
-ls -lh raygen.spv miss.spv chit.spv
+ls -lh raygen.spv miss.spv chit.spv anyhit.spv

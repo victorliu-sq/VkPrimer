@@ -48,7 +48,7 @@ void raygenMain()
 
     TraceRay(
         gTLAS,
-        RAY_FLAG_FORCE_OPAQUE,
+       RAY_FLAG_FORCE_OPAQUE, // this flag skips any-hit shaders entirely
         0xFF,
         0, 0, 0,
         ray,
