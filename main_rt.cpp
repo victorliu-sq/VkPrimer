@@ -585,27 +585,23 @@ int main() {
   VkCommandPool pool = createCmdPool(dev, qfam);
   VkCommandBuffer cmd = createCmdBuffer(dev, pool);
 
-  // Geometry buffers (2 triangles)
-  // std::vector<Vertex> vertices = {
-  //   {-0.5f, -0.5f, 0.0f}, {0.5f, -0.5f, 0.0f}, {0.0f, 0.5f, 0.0f},
-  //   {-0.2f, -0.2f, 0.0f}, {0.8f, -0.2f, 0.0f}, {0.3f, 0.7f, 0.0f},
-  // };
+  // Geometry buffers (3 triangles)
   const float EPSILON = 1e-7f;
   std::vector<Vertex> vertices = {
     // Triangle at z = 0
-    {-1.0f - EPSILON, 0, 0.0f},
-    {1.0f + EPSILON, EPSILON, 0.0f},
-    {1.0f + EPSILON, -EPSILON, 0.0f},
+    {-1.0f - EPSILON, 0, 1.0f * EPSILON},
+    {1.0f + EPSILON, EPSILON, 1.0f * EPSILON},
+    {1.0f + EPSILON, -EPSILON, 1.0f * EPSILON},
 
     // Triangle at z = 1
-    {-0.5f - EPSILON, 0, 1.0f},
-    {0.5f + EPSILON, EPSILON, 1.0f},
-    {0.5f + EPSILON, -EPSILON, 1.0f},
+    {-0.5f - EPSILON, 0, 2.0f * EPSILON},
+    {0.5f + EPSILON, EPSILON, 2.0f * EPSILON},
+    {0.5f + EPSILON, -EPSILON, 2.0f * EPSILON},
 
     // Triangle at z = 2
-    {0.0f - EPSILON, 0, 2.0f},
-    {0.0f + EPSILON, EPSILON, 2.0f},
-    {0.0f + EPSILON, -EPSILON, 2.0f},
+    {0.0f - EPSILON, 0, 3.0f * EPSILON},
+    {0.0f + EPSILON, EPSILON, 3.0f * EPSILON},
+    {0.0f + EPSILON, -EPSILON, 3.0f * EPSILON},
   };
 
   // In this example, indices are trivial
@@ -689,9 +685,9 @@ int main() {
   // originBase = (0, -1, 0)
   push.originBase[0] = 0.0f;
   push.originBase[1] = 0.0f;
-  push.originBase[2] = -1.0f;
+  push.originBase[2] = 0.0f;
 
-  // dir = +Y (must be normalized)
+  // dir = +z (must be normalized)
   push.dir[0] = 0.0f;
   push.dir[1] = 0.0f;
   push.dir[2] = 1.0f;

@@ -49,7 +49,7 @@ void raygenMain()
     ray.Origin = gPC.originBase + float3(x, 0.0, 0.0);
     ray.Direction = normalize(gPC.dir);
     ray.TMin = 0.0;
-    ray.TMax = 5.0;
+    ray.TMax = 1.0;
 
     Payload p;
     p.closestHitT = 2.0;
