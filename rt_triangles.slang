@@ -4,11 +4,16 @@
 //   set 0 binding 1 : rgba32f storage image
 struct PushConstants
 {
-    int   width;
-    int   height;
-    float zOrigin;
-    float zDir;
-    int   rayCount;
+    // int   width;
+    // int   height;
+    // float zOrigin;
+    // float zDir;
+    // int   rayCount;
+
+    int rayCount;
+
+    float3 originBase;
+    float3 dir;
 };
 
 struct Payload {
@@ -36,13 +41,15 @@ void raygenMain()
         return;
     }
 
-    float x = -0.5 + rayIndex * (1.0 / max(1.0, (float)(gPC.rayCount - 1)));
+    // float x = -0.5 + rayIndex * (1.0 / max(1.0, (float)(gPC.rayCount - 1)));
+    float xmin = -1.0, xmax = 1.0;
+    float x = -1.0 + rayIndex * ((xmax - xmin) / max(1.0, (float)(gPC.rayCount - 1)));
 
     RayDesc ray;
-    ray.Origin = float3(x, -1.0, 0.0);
-    ray.Direction = normalize(float3(0.0, 1.0, 0.0));
+    ray.Origin = gPC.originBase + float3(x, 0.0, 0.0);
+    ray.Direction = normalize(gPC.dir);
     ray.TMin = 0.0;
-    ray.TMax = 2.0;
+    ray.TMax = 5.0;
 
     Payload p;
     p.closestHitT = 2.0;
@@ -79,7 +86,6 @@ void aHitMain(inout Payload p, in BuiltInTriangleIntersectionAttributes attr) {
         p.closestHitT = t;
         p.closestHitPos = hitPos;
     }
-
     // Continue Traversal to find more hits.
     IgnoreHit();
 }

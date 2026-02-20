@@ -25,6 +25,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <vector>
@@ -120,13 +121,14 @@ static void destroyBuffer(VkDevice dev, Buffer &b) {
 }
 
 struct Image {
-  VkImage img{};
-  VkDeviceMemory mem{};
-  VkImageView view{};
-  VkFormat format{};
-  uint32_t w{}, h{};
+  VkImage img{}; // handler for C++ program to access GPU resource
+  VkDeviceMemory mem{}; // the GPU resource / memory location on GPU
+  VkImageView view{}; // handler for shader program to access GPU resource
+  VkFormat format{}; // pixel format
+  uint32_t w{}, h{}; // # of pixels
 };
 
+// create an image of certain format
 static Image createStorageImageRGBA32F(VkDevice dev, VkPhysicalDevice phys, uint32_t w, uint32_t h) {
   Image im{};
   im.w = w;
@@ -200,6 +202,8 @@ static void submitAndWait(VkDevice dev, VkQueue q, VkCommandBuffer cmd) {
   VK_CHECK(vkQueueWaitIdle(q)); // Wait for Completion
 }
 
+// It changes the image’s layout and synchronizes GPU access so the image can be used safely for a specific purpose (storage, transfer, sampling, etc.).
+// In Vulkan, an image must be in the correct layout before you use it, and you must insert pipeline barriers to avoid race conditions.
 static void cmdTransitionImage(VkCommandBuffer cmd, VkImage img, VkImageLayout oldL, VkImageLayout newL) {
   VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
   b.oldLayout = oldL;
@@ -251,7 +255,8 @@ static Accel createBLAS_Triangles(
 
   VkAccelerationStructureGeometryKHR geom{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
   geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-  geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+  // geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+  geom.flags = 0; // allow any-hit
   geom.geometry.triangles = tri;
 
   uint32_t primCount = indexCount / 3;
@@ -415,6 +420,17 @@ struct Vertex {
 };
 
 
+struct Push {
+  // int width;
+  // int height;
+  // float zOrigin;
+  // float zDir;
+  int rayCount;
+  float originBase[3];
+  float dir[3];
+};
+
+
 int main() {
   VK_CHECK(volkInitialize());
 
@@ -561,7 +577,8 @@ int main() {
 
   // Get an arbitrary queue: the first one.
   VkQueue queue{};
-  vkGetDeviceQueue(dev, qfam, 0, &queue); // This is where Vulkan/driver allocates 1 queue from family qfam for your new VkDevice.
+  vkGetDeviceQueue(dev, qfam, 0, &queue);
+  // This is where Vulkan/driver allocates 1 queue from family qfam for your new VkDevice.
 
   // ---- Rest of your original code unchanged from here ----
   // Command setup
@@ -569,13 +586,32 @@ int main() {
   VkCommandBuffer cmd = createCmdBuffer(dev, pool);
 
   // Geometry buffers (2 triangles)
+  // std::vector<Vertex> vertices = {
+  //   {-0.5f, -0.5f, 0.0f}, {0.5f, -0.5f, 0.0f}, {0.0f, 0.5f, 0.0f},
+  //   {-0.2f, -0.2f, 0.0f}, {0.8f, -0.2f, 0.0f}, {0.3f, 0.7f, 0.0f},
+  // };
+  const float EPSILON = 0.001f;
   std::vector<Vertex> vertices = {
-    {-0.5f, -0.5f, 0.0f}, {0.5f, -0.5f, 0.0f}, {0.0f, 0.5f, 0.0f},
-    {-0.2f, -0.2f, 0.0f}, {0.8f, -0.2f, 0.0f}, {0.3f, 0.7f, 0.0f},
+    // Triangle at z = 0
+    {-1.0f - EPSILON, 0, 0.0f},
+    {1.0f + EPSILON, EPSILON, 0.0f},
+    {1.0f + EPSILON, -EPSILON, 0.0f},
+
+    // Triangle at z = 1
+    {-0.5f - EPSILON, 0, 1.0f},
+    {0.5f + EPSILON, EPSILON, 1.0f},
+    {0.5f + EPSILON, -EPSILON, 1.0f},
+
+    // Triangle at z = 2
+    {0.0f - EPSILON, 0, 2.0f},
+    {0.0f + EPSILON, EPSILON, 2.0f},
+    {0.0f + EPSILON, -EPSILON, 2.0f},
   };
 
   // In this example, indices are trivial
-  std::vector<uint32_t> indices = {0, 1, 2, 3, 4, 5};
+  // Auto-generate indices: 0,1,2,...,N-1
+  std::vector<uint32_t> indices(vertices.size());
+  std::iota(indices.begin(), indices.end(), 0u);
 
   Buffer vbo = createBuffer(dev, phys, sizeof(Vertex) * vertices.size(),
                             VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
@@ -592,10 +628,12 @@ int main() {
   unmapBuffer(dev, ibo);
 
   // Output image
-  const uint32_t W = 256, H = 256;
+  const uint32_t W = 5, H = 1;
   Image outIm = createStorageImageRGBA32F(dev, phys, W, H);
+  // The current layout is undefined: it has no valid contents and it is not usable by any GPU operation yet
+  // So your shader cannot work on this image now.
 
-  // Begin command buffer
+  // Begin Command Buffer
   VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
   VK_CHECK(vkBeginCommandBuffer(cmd, &bi));
 
@@ -607,7 +645,9 @@ int main() {
 
   Accel tlas = createTLAS_OneInstance(dev, phys, cmd, blas.addr);
 
-  // Transition output image to GENERAL for storage writes
+  // Transition output image from UNDEFINED to GENERAL for storage writes
+  // After that, the image is ready for operations from shader program.
+  // TransitionImage is a pipeline barrier command: All commands that depend on this image will wait until the transition is finished.
   cmdTransitionImage(cmd, outIm.img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
   // Descriptors: TLAS + storage image
@@ -619,7 +659,8 @@ int main() {
   b0.stageFlags =
       VK_SHADER_STAGE_RAYGEN_BIT_KHR |
       VK_SHADER_STAGE_MISS_BIT_KHR |
-      VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+      VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR |
+      VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
 
   VkDescriptorSetLayoutBinding b1{};
   b1.binding = 1;
@@ -628,9 +669,11 @@ int main() {
   b1.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
   VkDescriptorSetLayoutBinding bindings[] = {b0, b1};
+
   VkDescriptorSetLayoutCreateInfo dslci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
   dslci.bindingCount = 2;
   dslci.pBindings = bindings;
+
   VkDescriptorSetLayout dsl{};
   VK_CHECK(vkCreateDescriptorSetLayout(dev, &dslci, nullptr, &dsl));
 
@@ -638,12 +681,21 @@ int main() {
   plci.setLayoutCount = 1;
   plci.pSetLayouts = &dsl;
 
-  struct Push {
-    int width;
-    int height;
-    float zOrigin;
-    float zDir;
-  } push{(int) W, (int) H, 1.0f, -1.0f};
+  const uint32_t RAY_COUNT = 5;
+
+  Push push{};
+  push.rayCount = RAY_COUNT;
+
+  // originBase = (0, -1, 0)
+  push.originBase[0] = 0.0f;
+  push.originBase[1] = 0.0f;
+  push.originBase[2] = -1.0f;
+
+  // dir = +Y (must be normalized)
+  push.dir[0] = 0.0f;
+  push.dir[1] = 0.0f;
+  push.dir[2] = 1.0f;
+
   VkPushConstantRange pcr{};
   pcr.offset = 0;
   pcr.size = sizeof(Push);
@@ -651,7 +703,8 @@ int main() {
   pcr.stageFlags =
       VK_SHADER_STAGE_RAYGEN_BIT_KHR |
       VK_SHADER_STAGE_MISS_BIT_KHR |
-      VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+      VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR |
+      VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
   plci.pushConstantRangeCount = 1;
   plci.pPushConstantRanges = &pcr;
 
@@ -678,6 +731,7 @@ int main() {
   VkDescriptorSet dset{};
   VK_CHECK(vkAllocateDescriptorSets(dev, &dsai, &dset));
 
+  // Assign Descriptors to Bindings in Desc
   VkWriteDescriptorSetAccelerationStructureKHR asWrite{
     VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR
   };
@@ -705,10 +759,12 @@ int main() {
   VkWriteDescriptorSet writes[] = {w0, w1};
   vkUpdateDescriptorSets(dev, 2, writes, 0, nullptr);
 
+  // ===============================================================
   // Ray tracing pipeline (raygen + miss + chit)
   auto raygenSpv = loadSpv("raygen.spv");
   auto missSpv = loadSpv("miss.spv");
   auto chitSpv = loadSpv("chit.spv");
+  auto ahitSpv = loadSpv("ahit.spv");
 
   auto makeModule = [&](const std::vector<uint32_t> &code) {
     VkShaderModuleCreateInfo smci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
@@ -722,6 +778,7 @@ int main() {
   VkShaderModule mRaygen = makeModule(raygenSpv);
   VkShaderModule mMiss = makeModule(missSpv);
   VkShaderModule mChit = makeModule(chitSpv);
+  VkShaderModule mAhit = makeModule(ahitSpv);
 
   std::vector<VkPipelineShaderStageCreateInfo> stages;
   auto addStage = [&](VkShaderModule m, VkShaderStageFlagBits stage, const char *entry) {
@@ -735,9 +792,10 @@ int main() {
   // addStage(mRaygen, VK_SHADER_STAGE_RAYGEN_BIT_KHR, "raygenMain");
   // addStage(mMiss, VK_SHADER_STAGE_MISS_BIT_KHR, "missMain");
   // addStage(mChit, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, "chitMain");
-  addStage(mRaygen, VK_SHADER_STAGE_RAYGEN_BIT_KHR, "main");
-  addStage(mMiss, VK_SHADER_STAGE_MISS_BIT_KHR, "main");
-  addStage(mChit, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, "main");
+  addStage(mRaygen, VK_SHADER_STAGE_RAYGEN_BIT_KHR, "main"); // index-0
+  addStage(mMiss, VK_SHADER_STAGE_MISS_BIT_KHR, "main"); // index-1
+  addStage(mChit, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, "main"); // index-2
+  addStage(mAhit, VK_SHADER_STAGE_ANY_HIT_BIT_KHR, "main"); // index-3
 
   // Shader groups: 0=raygen, 1=miss, 2=hitgroup(chit)
   std::vector<VkRayTracingShaderGroupCreateInfoKHR> groups;
@@ -753,13 +811,17 @@ int main() {
   VkRayTracingShaderGroupCreateInfoKHR g1{VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
   g1.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
   g1.generalShader = 1;
+  // g1.closestHitShader = VK_SHADER_UNUSED_KHR;
+  // g1.anyHitShader = VK_SHADER_UNUSED_KHR;
+  // g1.intersectionShader = VK_SHADER_UNUSED_KHR;
   groups.push_back(g1);
 
   VkRayTracingShaderGroupCreateInfoKHR g2{VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
   g2.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
   g2.generalShader = VK_SHADER_UNUSED_KHR;
   g2.closestHitShader = 2;
-  g2.anyHitShader = VK_SHADER_UNUSED_KHR;
+  // g2.anyHitShader = VK_SHADER_UNUSED_KHR;
+  g2.anyHitShader = 3;
   g2.intersectionShader = VK_SHADER_UNUSED_KHR;
   groups.push_back(g2);
 
@@ -801,6 +863,7 @@ int main() {
                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                             true);
 
+  // copy the data on the cpu side but gpu can also access it
   uint8_t *sbtMap = (uint8_t *) mapBuffer(dev, sbt);
   for (uint32_t i = 0; i < groupCount; i++)
     std::memcpy(sbtMap + i * handleSizeAligned, handles.data() + i * handleSize, handleSize);
@@ -828,9 +891,12 @@ int main() {
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, pipelineLayout, 0, 1, &dset, 0, nullptr);
   vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_RAYGEN_BIT_KHR, 0, sizeof(Push), &push);
 
+  // ray tracing writes into outIm
   vkCmdTraceRaysKHR(cmd, &rgenRegion, &missRegion, &hitRegion, &callRegion, W, H, 1);
 
   // Copy image back: outIm -> linear staging buffer via vkCmdCopyImageToBuffer
+  // After RT Pipeline Computation
+  // Copy into a buffer that cpu can map later (GPU -> GPU)
   VkDeviceSize pixelStride = sizeof(float) * 4;
   VkDeviceSize readbackSize = (VkDeviceSize) W * H * pixelStride;
 
@@ -857,11 +923,20 @@ int main() {
     return data + (y * W + x) * 4;
   };
 
-  std::cout << "Sample pixels (x,y -> hitPos.xyz,w):\n";
-  for (auto [x,y]: std::vector<std::pair<uint32_t, uint32_t> >{{128, 128}, {64, 64}, {200, 200}, {10, 10}}) {
-    float *p = at(x, y);
-    std::cout << "(" << x << "," << y << ") -> "
-        << p[0] << ", " << p[1] << ", " << p[2] << ", " << p[3] << "\n";
+  // std::cout << "Sample pixels (x,y -> hitPos.xyz,w):\n";
+  // for (auto [x,y]: std::vector<std::pair<uint32_t, uint32_t> >{{128, 128}, {64, 64}, {200, 200}, {10, 10}}) {
+  //   float *p = at(x, y);
+  //   std::cout << "(" << x << "," << y << ") -> "
+  //       << p[0] << ", " << p[1] << ", " << p[2] << ", " << p[3] << "\n";
+  // }
+  //
+  std::cout << "Ray results (closest.xyz, hitCount):\n";
+  for (uint32_t i = 0; i < RAY_COUNT; i++) {
+    float *p = at(i, 0);
+    std::cout << "Ray " << i
+        << " -> closest=("
+        << p[0] << ", " << p[1] << ", " << p[2]
+        << "), hits=" << p[3] << "\n";
   }
 
   unmapBuffer(dev, readback);
@@ -893,4 +968,3 @@ int main() {
   std::cout << "Done.\n";
   return 0;
 }
-
