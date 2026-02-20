@@ -590,7 +590,7 @@ int main() {
   //   {-0.5f, -0.5f, 0.0f}, {0.5f, -0.5f, 0.0f}, {0.0f, 0.5f, 0.0f},
   //   {-0.2f, -0.2f, 0.0f}, {0.8f, -0.2f, 0.0f}, {0.3f, 0.7f, 0.0f},
   // };
-  const float EPSILON = 0.001f;
+  const float EPSILON = 1e-7f;
   std::vector<Vertex> vertices = {
     // Triangle at z = 0
     {-1.0f - EPSILON, 0, 0.0f},
