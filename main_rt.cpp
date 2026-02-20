@@ -39,6 +39,7 @@ static std::vector<uint32_t> loadSpv(const char *path) {
     std::cerr << "Failed to open " << path << "\n";
     std::exit(1);
   }
+
   f.seekg(0, std::ios::end);
   size_t sz = (size_t) f.tellg();
   f.seekg(0, std::ios::beg);
@@ -682,7 +683,6 @@ int main() {
   Push push{};
   push.rayCount = RAY_COUNT;
 
-  // originBase = (0, -1, 0)
   push.originBase[0] = 0.0f;
   push.originBase[1] = 0.0f;
   push.originBase[2] = 0.0f;
@@ -757,10 +757,15 @@ int main() {
 
   // ===============================================================
   // Ray tracing pipeline (raygen + miss + chit)
-  auto raygenSpv = loadSpv("raygen.spv");
-  auto missSpv = loadSpv("miss.spv");
-  auto chitSpv = loadSpv("chit.spv");
-  auto ahitSpv = loadSpv("ahit.spv");
+  std::string shaderDir = SHADER_DIR;
+  // auto raygenSpv = loadSpv("raygen.spv");
+  // auto missSpv = loadSpv("miss.spv");
+  // auto chitSpv = loadSpv("chit.spv");
+  // auto ahitSpv = loadSpv("ahit.spv");
+  auto raygenSpv = loadSpv((shaderDir + "/" + "raygen.spv").c_str());
+  auto missSpv = loadSpv((shaderDir + "/" + "miss.spv").c_str());
+  auto chitSpv = loadSpv((shaderDir + "/" +"chit.spv").c_str());
+  auto ahitSpv = loadSpv((shaderDir + "/"+ "ahit.spv").c_str());
 
   auto makeModule = [&](const std::vector<uint32_t> &code) {
     VkShaderModuleCreateInfo smci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};

@@ -51,6 +51,8 @@ void raygenMain()
     ray.TMin = 0.0;
     ray.TMax = 1.0;
 
+
+
     Payload p;
     p.closestHitT = 2.0;
     p.closestHitPos = float3(0.0, 0.0, 0.0);

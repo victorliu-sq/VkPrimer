@@ -35,7 +35,7 @@ $SLANGC $SHADER $COMMON_FLAGS \
 
 echo "Compiling any-hit..."
 $SLANGC $SHADER $COMMON_FLAGS \
-  -entry aHitMain -stage anyhit -o ahit.spv
+  -entry ayHitMain -stage anyhit -o ahit.spv
 
 echo "== Done =="
 
