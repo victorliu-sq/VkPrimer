@@ -8,10 +8,10 @@ find_package(NvproCore2 REQUIRED)
 
 find_package(Vulkan REQUIRED)
 
-add_executable(VkPrimer main.cpp)
+add_executable(VkPrimer app/main.cpp)
 target_link_libraries(VkPrimer PRIVATE Vulkan::Vulkan)
 
-add_executable(VkPrimer10k main_10k.cpp)
+add_executable(VkPrimer10k app/main_10k.cpp)
 target_link_libraries(VkPrimer10k PRIVATE Vulkan::Vulkan)
 
 # =====================================================
@@ -57,7 +57,7 @@ add_custom_target(compile_shaders
 )
 
 # Your executable
-add_executable(VkPrimerRT main_rt.cpp)
+add_executable(VkPrimerRT app/main_rt.cpp)
 
 target_link_libraries(VkPrimerRT PRIVATE Vulkan::Vulkan)
 
@@ -75,5 +75,6 @@ target_sources(VkPrimerRT PRIVATE
     ${CHIT_SPV}
     ${AHIT_SPV}
 )
+
 #add_executable(VkPrimerRT main_rt.cpp)
 #target_link_libraries(VkPrimerRT PRIVATE Vulkan::Vulkan)
