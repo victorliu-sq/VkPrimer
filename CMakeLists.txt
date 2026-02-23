@@ -13,3 +13,4 @@ include(CompileSlang)
 # =====================================================
 add_subdirectory(apps/01_vec_add)
 add_subdirectory(apps/02_rt_trianlge)
+add_subdirectory(apps/03_rt_lsi)
